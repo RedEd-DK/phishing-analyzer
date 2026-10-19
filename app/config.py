@@ -13,6 +13,10 @@ class Config:
     poll_seconds: int = 60
     data_dir: Path = Path("data")
     max_message_bytes: int = 25 * 1024 * 1024
+    auto_reply_mode: str = "preview"
+    escalation_email: str = "security@rededucation.com"
+    reporter_domains: tuple = ("rededucation.com",)
+    replies_per_hour: int = 10
 
     @classmethod
     def from_env(cls):
@@ -28,5 +32,14 @@ class Config:
         mailbox = os.environ.get("MAILBOX", "phishing@rededucation.com").strip()
         if interval < 5 or limit < 1024 or "@" not in mailbox:
             raise ValueError("Require POLL_SECONDS >= 5, MAX_MESSAGE_BYTES >= 1024 and a mailbox address")
+        mode = os.environ.get("AUTO_REPLY_MODE", "preview").lower()
+        escalation = os.environ.get("ESCALATION_EMAIL", "security@rededucation.com").strip()
+        domains = tuple(d.strip().lower() for d in os.environ.get("REPORTER_DOMAINS", "rededucation.com").split(",") if d.strip())
+        rate = int(os.environ.get("REPLIES_PER_HOUR", "10"))
+        if mode not in ("off", "preview", "send") or not domains or rate < 1 or rate > 100:
+            raise ValueError("Invalid reply mode, reporter domains or rate limit")
+        from email.utils import parseaddr
+        if parseaddr(escalation)[1] != escalation or "@" not in escalation or any(c.isspace() for c in escalation):
+            raise ValueError("Invalid escalation email")
         return cls(tenant, client, secret, mailbox, interval,
-                   Path(os.environ.get("DATA_DIR", "data")), limit)
+                   Path(os.environ.get("DATA_DIR", "data")), limit, mode, escalation, domains, rate)

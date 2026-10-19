@@ -1,4 +1,5 @@
-"""OAuth client credentials; Graph operations are GET only."""
+"""OAuth client credentials, mailbox reads and guarded single-attempt mail sending."""
+import base64
 import json
 import time
 from datetime import datetime, timezone
@@ -12,6 +13,13 @@ GRAPH = "https://graph.microsoft.com/v1.0"
 
 class GraphError(RuntimeError):
     pass
+
+
+class SendError(GraphError):
+    def __init__(self, reason, state="uncertain", retry_seconds=300):
+        super().__init__(reason)
+        self.state = state
+        self.retry_seconds = retry_seconds
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -114,3 +122,42 @@ class GraphClient:
 
     def mime(self, message_id):
         return self.get(self.base + "/messages/" + quote(message_id, safe="") + "/$value", raw=True)
+
+    def send_mime(self, mime_bytes):
+        """Never retry a potentially accepted POST; Graph has no idempotency key."""
+        if self.config.auto_reply_mode != "send":
+            raise SendError("sending_disabled", "failed")
+        try:
+            token = self._access_token()
+        except GraphError:
+            raise SendError("token_unavailable_before_send", "retry") from None
+        if time.monotonic() < self.retry_after:
+            raise SendError("graph_retry_window", "retry", max(1, self.retry_after - time.monotonic()))
+        req = Request(self.base + "/sendMail", data=base64.b64encode(mime_bytes),
+                      headers={"Authorization": "Bearer " + token, "Content-Type": "text/plain"}, method="POST")
+        try:
+            with self.opener.open(req, timeout=30) as response:
+                if response.status != 202:
+                    raise SendError("unexpected_send_status")
+        except HTTPError as exc:
+            code = exc.code
+            retry_header = exc.headers.get("Retry-After", "300") if exc.headers else "300"
+            exc.close()
+            if code in (401, 403):
+                self.token = None
+                self.expires = 0
+                raise SendError("send_http_%d_check_Mail_Send" % code, "blocked") from None
+            if code == 429:
+                try:
+                    delay = float(retry_header)
+                except ValueError:
+                    try:
+                        delay = (parsedate_to_datetime(retry_header) - datetime.now(timezone.utc)).total_seconds()
+                    except (ValueError, TypeError, OverflowError):
+                        delay = 300
+                raise SendError("send_throttled", "retry", max(60, delay)) from None
+            if 400 <= code < 500:
+                raise SendError("send_http_%d" % code, "failed") from None
+            raise SendError("send_http_%d_delivery_unknown" % code) from None
+        except (URLError, TimeoutError, OSError):
+            raise SendError("send_network_result_unknown") from None

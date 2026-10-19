@@ -11,6 +11,10 @@ services:
       POLL_SECONDS: ${POLL_SECONDS:-60}
       MAX_MESSAGE_BYTES: ${MAX_MESSAGE_BYTES:-26214400}
       DATA_DIR: /data
+      AUTO_REPLY_MODE: ${AUTO_REPLY_MODE:-preview}
+      ESCALATION_EMAIL: ${ESCALATION_EMAIL:-security@rededucation.com}
+      REPORTER_DOMAINS: ${REPORTER_DOMAINS:-rededucation.com}
+      REPLIES_PER_HOUR: ${REPLIES_PER_HOUR:-10}
     volumes:
       - analyzer-data:/data
     read_only: true

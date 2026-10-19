@@ -1,10 +1,104 @@
-# Phishing analyzer MVP
+# Phishing analyzer
 
-Read-only Microsoft Graph collector for `phishing@rededucation.com`.
+Microsoft Graph analysis and response service for `phishing@rededucation.com`.
 Uses OAuth client credentials, polls Inbox, extracts original attached emails,
-and stores raw MIME plus structured evidence and offline security findings in SQLite. No OpenAI/GPT, Jira,
-mailbox writes, automated replies, sender blocking, or URL fetching.
+and stores raw MIME plus structured evidence and offline security findings in SQLite.
+It can automatically send a plain-text analysis response to the reporting sender,
+with escalation guidance to `security@rededucation.com`. No OpenAI/GPT, Jira,
+message deletion/moving, sender blocking, or URL fetching.
 Python standard library only; Docker runs Python 3.12 as an unprivileged user.
+
+## Intended workflow: receive, analyze, reply
+
+1. An employee reports an email to `phishing@rededucation.com`, preferably with
+   the original attached as `.eml`.
+2. The collector saves the report, extracts originals, and performs offline checks.
+3. In `send` mode, it responds from `phishing@rededucation.com` to the outer
+   reporting sender. It does not use the suspect original's sender or the outer
+   Reply-To, and it does not reply-all or copy Security.
+4. The response includes review priority, findings, defanged links, attachment
+   indicators, limits of the assessment, and this instruction:
+   "If you need to escalate this further, forward this email thread and the original reported email to security@rededucation.com."
+
+If attached originals exist, response findings focus on those originals so that
+an employee's signature links are not treated as the suspect message's findings.
+Without an extracted original, the response explains that its analysis covers
+only the submitted email and asks for `.eml` for fuller analysis. It never certifies
+an email safe. All replies are plain text and contain no original attachments,
+tracking pixels, or raw email body quotes. A valid outer Message-ID is used for
+In-Reply-To/References threading; mailbox client grouping can vary.
+
+### Modes and activation
+
+The template defaults to `AUTO_REPLY_MODE=preview`: eligible responses are saved
+in the local outbox without sending. `off` disables queueing and dispatch;
+`send` activates delivery and requires effective Mail.Send authorization.
+
+Set these locally in `.env` after establishing the scoped sending permission:
+
+```dotenv
+AUTO_REPLY_MODE=send
+ESCALATION_EMAIL=security@rededucation.com
+REPORTER_DOMAINS=rededucation.com
+REPLIES_PER_HOUR=10
+```
+
+Then apply configuration with `docker compose up -d --build` (a restart alone
+does not apply changed environment variables). Reports received before the first
+non-off startup's persistent activation timestamp are analyzed but skipped for
+automatic replies. Rebuilding/restarting keeps that timestamp. This prevents
+historical Inbox backfill from producing a burst of unsolicited replies.
+Preview-mode pending responses received after activation become eligible when
+send mode is enabled. Skipped historical messages are not retroactively queued.
+
+Only reporting senders on exact `REPORTER_DOMAINS` domains receive replies by
+default. External reports are still analyzed and stored. Expand this comma-separated
+allowlist only if the reporting workflow requires it. A From-domain allowlist is
+not authentication and cannot prove the reporter's identity.
+
+### Loop prevention and delivery state
+
+Incoming automatic replies, analyzer-marked responses, bulk/list messages,
+bounces, service/security senders and common no-reply senders are skipped.
+Outgoing responses carry Auto-Submitted: auto-replied, X-Auto-Response-Suppress:
+All, and an analyzer marker. A per-recipient hourly limit delays additional
+responses; at most 20 ready responses are attempted per poll. The collector does
+not automatically forward mail to Security.
+
+The SQLite outbox is keyed by mailbox and immutable received-message ID.
+Claims persist before the send POST. Accepted responses are not resent on later
+polls or restarts. One worker owns the evidence volume through a process lock
+(local execution supports macOS/Linux; use Docker on Windows).
+
+Delivery states are:
+
+| State | Meaning |
+| --- | --- |
+| pending | Response prepared; preview mode or waiting to send |
+| accepted | Graph returned 202; final delivery is not confirmed |
+| retry | Rejected before submission or throttled; retries after the delay |
+| blocked | 401/403; check credentials and effective Mail.Send authorization; retry after 5 minutes |
+| skipped | Historical mail, ineligible sender or loop-prevention rule |
+| uncertain | Network/5xx/unexpected outcome or interrupted send; never auto-retried |
+| failed | Permanent 4xx/local rejection; manual review required |
+
+Graph mail sending has no application idempotency key. A timeout or process crash
+can leave delivery unknown. The collector favors avoiding duplicate replies:
+review Sent Items and Exchange message tracing before manually reconciling an
+uncertain job. Do not reset uncertain jobs blindly. Exactly-once delivery is not
+claimed. Received message evidence remains intact even if response sending fails.
+
+Inspect states and exact stored reply text without sending anything:
+
+```sh
+docker compose exec -T analyzer python -m app.replies --status
+docker compose exec -T analyzer python -m app.replies --limit 5
+docker compose logs --tail=20 analyzer
+```
+
+The outbox contains recipient addresses and response text; treat the evidence
+volume, exports and backups as private. Processing logs contain only counts,
+states and fixed error reasons, not email contents or credentials.
 
 ## Start with Docker
 
@@ -43,15 +137,39 @@ history; the next start will process Inbox messages again.
 Use the existing app registration and Exchange Online application RBAC scope
 for this mailbox. Reading MIME content needs effective application `Mail.Read`
 access (`Application Mail.Read` when assigned through Exchange RBAC).
-Do not grant Mail.Send or Mail.ReadWrite for this collector. Broad Entra
+Preview/off mode needs only read access. Send mode additionally needs effective
+application `Mail.Send` (`Application Mail.Send` with Exchange RBAC), restricted
+to the same phishing mailbox. Mail.ReadWrite is not required. Broad Entra
 application permissions and Exchange RBAC grants can be additive: verify that
 the app is authorized only for the intended mailbox, including an out-of-scope
 mailbox authorization test. The app itself does not alter permissions.
 
 The token POST uses the tenant-specific OAuth v2 endpoint, client credentials,
-and `https://graph.microsoft.com/.default`. Every Graph request is GET.
+and `https://graph.microsoft.com/.default`. Mailbox reading uses GET; sending
+uses a single-attempt MIME POST to `/users/{mailbox}/sendMail`.
 Messages are requested with immutable IDs; bearer tokens are restricted to
 Graph URLs under the configured mailbox path and redirects are disabled.
+
+An Exchange administrator can reuse the existing validated management scope:
+
+```powershell
+Connect-ExchangeOnline
+New-ManagementRoleAssignment -Name "PhishingAnalyzer-MailSend" `
+  -App "3e16daef-f2ac-4761-86eb-2d80e04d9a7a" `
+  -Role "Application Mail.Send" `
+  -CustomResourceScope "YOUR_EXISTING_PHISHING_ONLY_SCOPE"
+Test-ServicePrincipalAuthorization `
+  -Identity "3e16daef-f2ac-4761-86eb-2d80e04d9a7a" `
+  -Resource "phishing@rededucation.com" |
+  Format-Table RoleName,GrantedPermissions,AllowedResourceScope,InScope
+```
+
+Replace the scope placeholder with the existing verified scope name; do not
+create an unrestricted assignment. Also test an approved out-of-scope mailbox:
+Mail.Send must be out of scope there. RBAC tests exclude separate Entra grants,
+so review broad permissions too. Changes can take time to become effective.
+See [Exchange application RBAC](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac)
+and [Graph sendMail permissions and 202 semantics](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0).
 
 ## Processing and evidence
 
@@ -220,6 +338,10 @@ Neither `.env` nor evidence enters the Docker build context.
 | `POLL_SECONDS` | `60` (minimum `5`) |
 | `MAX_MESSAGE_BYTES` | `26214400` |
 | `DATA_DIR` | `/data` in Docker, `data` outside Docker |
+| `AUTO_REPLY_MODE` | `preview`; `send` or `off` also accepted |
+| `ESCALATION_EMAIL` | `security@rededucation.com` |
+| `REPORTER_DOMAINS` | `rededucation.com`; comma-separated exact reporting domains |
+| `REPLIES_PER_HOUR` | `10` per reporting recipient; 1–100 |
 
 ## Offline tests and local development
 
