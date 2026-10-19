@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+data/
+*.sqlite3*
+*.eml
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+
+# Local investigation exports
+investigation-reports*.html
+investigation-reports*.txt
+investigation-reports*.json
