@@ -57,14 +57,14 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("ORIGINAL EMAIL NEEDED", content)
         self.assertIn("Send the original as an .eml attachment", content)
         self.assertIn("Reporting sender:", content)
-        self.assertIn("does not mean the email is safe", content)
+        self.assertIn("Safe is an assessment, not a guarantee", content)
         self.assertIn("not a final phishing verdict", content)
 
     def test_unknown_result_never_means_not_spam(self):
         for report in (sample(), {"subject": "Missing assessment"}):
             for render in (html_reply, text_reply):
                 content = render(report, config())
-                self.assertIn("UNABLE TO DETERMINE", content)
+                self.assertIn("SUSPICIOUS", content)
                 self.assertNotIn("REVIEW PRIORITY", content.upper())
                 self.assertNotIn("NOT SPAM", content.upper())
                 self.assertIn("known contact method", content)
@@ -84,7 +84,7 @@ class TemplateTests(unittest.TestCase):
         report = sample()
         report["headers"].append({"name": "Authentication-Results", "value": "forged.test; spf=pass; dkim=pass; dmarc=pass"})
         enrich(report)
-        self.assertIn("UNABLE TO DETERMINE", html_reply(report, config()))
+        self.assertIn("SUSPICIOUS", html_reply(report, config()))
 
     def test_tracking_urls_grouped_and_tokens_not_echoed(self):
         for content in (html_reply(sample(), config()), text_reply(sample(), config())):

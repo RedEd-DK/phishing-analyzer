@@ -460,64 +460,64 @@ not proof of correct detection. A missing/invalid key, API outage, refusal,
 invalid structured answer or exhausted limit produces a visible offline fallback.
 Set `AI_ANALYSIS_MODE=off` and recreate to disable future API requests.
 
-### Combined result: balanced policy v3
+### Two-result determination policy v4
 
-Exactly three results appear in replies:
+Every analysis reply has exactly one of two main results:
 
-- **SAFE**: AI finds legitimate context at medium or high confidence, the attached
-  original's material evidence is complete, and there are no material blockers.
-  Missing authentication headers alone do not reduce a routine message to unknown.
-- **SUSPICIOUS**: a strong warning or a combination of independent risk signals
-  crosses the review threshold, or AI identifies phishing/spam or concrete risk
-  at medium/high confidence.
-- **UNABLE TO DETERMINE**: material content is missing, AI is unavailable or low
-  confidence, or a sensitive action/conflicting evidence remains unresolved.
+- **SAFE**, in green: AI finds legitimate context at medium/high confidence,
+  material original-email evidence is available, and there are no material warnings.
+- **SUSPICIOUS**, in red: strong/combined warning evidence, phishing/spam context,
+  unresolved sensitive actions, missing essential content, low confidence, or an API
+  failure requires review. The reason distinguishes a detected warning from an
+  inability to clear a message. Suspicious does not automatically mean malicious.
 
-We weigh signal families instead of treating every anomaly as a veto. Example
-policy points (not probabilities): dangerous executable/obfuscated files 8;
-active-content attachments or URL user-info deception 5; misleading displayed link
-3; IP-based navigation 2; Reply-To domain difference or an unverified authentication
-failure 1; HTTP or an internationalized domain .5. A score of 5 warrants Suspicious.
-Direct password/MFA requests and embedded instructions to manipulate classification
-also trigger review. High-priority warnings remain decisive.
+The retired Unable to determine result is no longer displayed. Genuine uncertainty
+maps to Suspicious with a clear review explanation, never Safe by default. Internal
+AI classifications still retain uncertainty for audit and policy decisions.
 
-Repeated or correlated findings count once per family per original. Weak clues
-from unrelated originals are not summed together. A Safe result requires no material
-blockers and at most 1.5 policy points; strong evidence cannot be cancelled by an AI
-benign vote. A direct bank-detail change, missing sender identity, deceptive link,
-uninspected archive or incomplete body cannot be cleared just by benign prose.
+The Jira regression revealed that a 320-character Authentication-Results header
+was shortened to 300 characters and incorrectly marked the entire message incomplete,
+although both the plaintext and HTML message content were present. Coverage now
+separates **material gaps** from **shortened unverified metadata**:
 
-These are application-specific initial weights, not vendor-derived or statistically
-calibrated risk scores. Medium-confidence legitimate assessments can be Safe;
-model confidence is qualitative and is not treated as a numerical probability.
-Names, internal domains, HTTPS, SurveyMonkey or any other familiar service are
-never unconditional allowlist rules. A plausible survey requesting an MFA code
-remains Suspicious. Safe is an assessment of available evidence, not verified sender
-authenticity, a malware scan or a guarantee about an unvisited destination.
+- Missing/truncated body, omitted original, navigation links, attachment metadata,
+  findings or sender identity details are material gaps and prevent Safe.
+- Shortened Authentication-Results/date metadata is recorded in `metadata_notes`
+  but does not make an otherwise complete message incomplete. The full header
+  and its locally extracted authentication findings remain in saved evidence.
+- Sender identity headers are prioritized over repeated diagnostic headers; a long
+  diagnostic-header list cannot crowd From/Reply-To/Return-Path out of the request.
+- `coverage_gaps` records actual omissions and the messages affected. A real input
+  budget reduction remains material. Diagnostic explanations are themselves bounded.
 
-The text and HTML alternatives are both considered when their text differs, so a
-benign plaintext alternative cannot hide a credential request in the HTML body.
-The AI schema now explicitly captures the requested action and concrete risk signals.
-Its instructions distinguish routine business context from credential theft, payment
-changes and data requests. Absence of authentication headers or unavailable browsing
-is not, by itself, a reason to abstain. Both are still disclosed as check limitations.
-Each saved `combined_assessment` includes the policy version, decision basis,
-weighted signals and blockers so an analyst can audit why a result was selected.
+Weighted risk families remain in place. Policy points are not probabilities:
+dangerous executables/obfuscated files 8; active content or URL user-info deception
+5; misleading displayed link 3; IP-based navigation 2; Reply-To domain difference
+or an unverified authentication failure 1; HTTP/internationalized domain .5.
+A score of 5 or a strong warning requires Suspicious. Repeated correlated findings
+count once per family per original. Safe requires at most 1.5 points and no
+material blockers or sensitive action. Internal names, known brands and HTTPS
+are not unconditional allowlists. Credential/MFA requests and embedded instructions
+to manipulate the analyzer remain warnings even with benign AI prose.
 
-For the reported Pulse Check-In survey (reference `F85986E2AF`), the old model
-already returned `likely_legitimate`, `medium`, with complete original coverage and
-no warning findings. Policy v2 rejected it solely because confidence was not high.
-Policy v3 assesses that saved evidence as Safe without needing another API request.
-Original AI results and previously sent replies are not silently rewritten.
+Both plaintext and differing HTML alternatives are considered. Resource-only images
+are summarized separately from navigational links. Missing authentication alone,
+ordinary signature images and benign routine deadlines are not threats by themselves.
+Safe remains an assessment of available evidence, not verified sender authenticity,
+a malware scan or a guarantee about an unvisited destination.
 
-The design draws on the documented multi-signal approach in
+Saved decisions include policy version, basis, weighted signals and blockers. Old
+reports/replies are not automatically reassessed or resent. Offline reanalysis
+preserves the historical AI coverage result; submit a new report for a fresh API
+analysis with the corrected coverage metadata.
+
+The multi-signal approach is informed by
 [Microsoft's anti-spoofing evaluation](https://learn.microsoft.com/en-us/defender-office-365/anti-phishing-protection-spoofing-about),
 [SpamAssassin's weighted tests](https://spamassassin.apache.org/full/4.0.x/doc/Mail_SpamAssassin_Conf.html),
 and [Cloudflare's content, URL and sender analysis](https://developers.cloudflare.com/cloudflare-one/email-security/reference/how-es-detects-phish/).
-It does not replicate their proprietary models or supply their reputation telemetry,
-sender history, live URL inspection or attachment sandboxing. No external scanner
-or browsing service was added. Evaluate on labelled real reports before claiming
-production detection accuracy.
+Weights are application-specific initial heuristics, not their proprietary models
+or statistically calibrated scores. No reputation feed, live URL browsing or
+attachment sandbox was added. Real-mail precision/recall requires labelled evaluation.
 
 ### Data sent and retained
 
@@ -612,11 +612,16 @@ For a small live acceptance set with the configured model:
 docker compose exec -T analyzer python -m app.evaluate --live
 ```
 
-This makes **seven billable API requests** using synthetic examples only. No
+This makes **eight billable API requests** using synthetic examples only. No
 mailbox reads, report updates, reply sending, or automatic retries occur. These
 manual calls are outside the collector's daily cap. Expected cases: survey,
-meeting and paid receipt Safe; password/MFA request, executable attachment and
-prompt injection Suspicious; missing body Unable to determine. Exit code 1 means
+meeting, paid receipt and Jira notice Safe; password/MFA request, executable
+attachment, prompt injection and missing body Suspicious. Exit code 1 means
 a mismatch or API failure. This is not a statistically representative benchmark.
-The first run on the configured GPT-6.1 Sol matched 7/7 with 6,968 total tokens.
+The earlier policy-v3 seven-case run matched 7/7; that historical set used a third
+result for missing content. The current binary set includes the Jira-header regression.
 Broader precision/recall estimates require a separately labelled real-mail corpus.
+
+The current policy-v4 live acceptance run matched 8/8 synthetic cases with 8,753
+total tokens, including the long-header Jira case as Safe. This remains a small
+acceptance set, not a real-mail detection accuracy estimate.

@@ -52,7 +52,7 @@ class BalancedDecisionTests(unittest.TestCase):
 
     def test_bank_change_request_cannot_be_safe_on_ai_benign_vote(self):
         value=ai(original('Use our new bank account for the next invoice.'))
-        self.assertEqual(self.label(value),'UNABLE TO DETERMINE')
+        self.assertEqual(self.label(value),'SUSPICIOUS')
         self.assertIn('payment_change',decision_record(value)['safe_blockers'])
 
     def test_explicit_model_risk_prevents_benign_verdict(self):
@@ -62,7 +62,7 @@ class BalancedDecisionTests(unittest.TestCase):
     def test_model_sensitive_action_without_conclusive_risk_requires_review(self):
         for action in ('credentials_or_mfa','payment_or_bank_change','sensitive_data','download_or_execute'):
             value=ai(original('Please review the attached business request.'),requested_action=action)
-            self.assertEqual(self.label(value),'UNABLE TO DETERMINE')
+            self.assertEqual(self.label(value),'SUSPICIOUS')
 
     def test_isolated_auth_fail_does_not_equal_phishing(self):
         value=original('Your training lab cost report is available for review.')
@@ -102,7 +102,7 @@ class BalancedDecisionTests(unittest.TestCase):
         other['links']=[{'text':'https://example.com','target':'https://elsewhere.example'}]
         enrich(value)
         self.assertEqual(decision_record(value)['risk_points'],3)
-        self.assertEqual(self.label(value),'UNABLE TO DETERMINE')
+        self.assertEqual(self.label(value),'SUSPICIOUS')
 
     def test_legacy_medium_ai_survey_result_is_safe_without_new_api_call(self):
         value=ai(original('Please complete the anonymous employee pulse check. https://www.surveymonkey.com/r/EXAMPLE'))
@@ -116,7 +116,7 @@ class BalancedDecisionTests(unittest.TestCase):
             if case=='body': value['originals'][0]['body_text']=''
             if case=='partial': value['ai_analysis']['coverage_complete']=False
             if case=='ai': value.pop('ai_analysis')
-            self.assertEqual(self.label(value),'UNABLE TO DETERMINE')
+            self.assertEqual(self.label(value),'SUSPICIOUS')
             self.assertTrue(decision_record(value)['decision_basis'])
 
     def test_benign_plaintext_cannot_hide_credential_theft_in_html_alternative(self):

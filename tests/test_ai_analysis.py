@@ -177,7 +177,7 @@ class DecisionTests(unittest.TestCase):
 
     def test_spam_phishing_legitimate_and_uncertain(self):
         for verdict, expected in [('likely_phishing','SUSPICIOUS'),('likely_spam','SUSPICIOUS'),
-                                  ('likely_legitimate','SAFE'),('unable_to_determine','UNABLE TO DETERMINE')]:
+                                  ('likely_legitimate','SAFE'),('unable_to_determine','SUSPICIOUS')]:
             value = report()
             value['ai_analysis'] = completed(result(verdict))
             self.assertEqual(self.label(value), expected)
@@ -209,10 +209,10 @@ class DecisionTests(unittest.TestCase):
                       {'result':result(confidence='low')}):
             value = report()
             value['ai_analysis'] = completed(**flags)
-            self.assertEqual(self.label(value), 'UNABLE TO DETERMINE')
+            self.assertEqual(self.label(value), 'SUSPICIOUS')
         value = report()['originals'][0]
         value['ai_analysis'] = completed()
-        self.assertEqual(self.label(value), 'UNABLE TO DETERMINE')
+        self.assertEqual(self.label(value), 'SUSPICIOUS')
 
     def test_unverified_auth_failure_is_weak_evidence_not_automatic_suspicion(self):
         value = report()
@@ -220,7 +220,7 @@ class DecisionTests(unittest.TestCase):
         enrich(value)
         for verdict in ('likely_legitimate','unable_to_determine'):
             value['ai_analysis'] = completed(result(verdict))
-            self.assertEqual(self.label(value), 'SAFE' if verdict=='likely_legitimate' else 'UNABLE TO DETERMINE')
+            self.assertEqual(self.label(value), 'SAFE' if verdict=='likely_legitimate' else 'SUSPICIOUS')
             self.assertEqual(decision_record(value)['risk_points'],1)
 
     def test_isolated_low_offline_clue_does_not_block_safe(self):
@@ -230,7 +230,7 @@ class DecisionTests(unittest.TestCase):
         value['ai_analysis']=completed()
         self.assertEqual(self.label(value),'SAFE')
 
-    def test_only_three_main_results_for_all_verdicts_confidence_and_warnings(self):
+    def test_only_two_main_results_for_all_verdicts_confidence_and_warnings(self):
         for verdict in ('likely_phishing','likely_spam','likely_legitimate','unable_to_determine'):
             for confidence in ('low','medium','high'):
                 for warning in (None,'http://example.com'):
@@ -239,13 +239,13 @@ class DecisionTests(unittest.TestCase):
                         value['originals'][0]['urls']=[warning]
                         enrich(value)
                     value['ai_analysis']=completed(result(verdict,confidence))
-                    self.assertIn(self.label(value),{'SAFE','SUSPICIOUS','UNABLE TO DETERMINE'})
-        self.assertEqual(self.label(report()),'UNABLE TO DETERMINE')
+                    self.assertIn(self.label(value),{'SAFE','SUSPICIOUS'})
+        self.assertEqual(self.label(report()),'SUSPICIOUS')
 
     def test_unavailable_fallback_visible_and_model_html_is_escaped(self):
         value = report()
         value['ai_analysis'] = {'status':'unavailable'}
-        self.assertEqual(self.label(value), 'UNABLE TO DETERMINE')
+        self.assertEqual(self.label(value), 'SUSPICIOUS')
         self.assertIn('AI analysis unavailable', html_reply(value,cfg()))
         value['ai_analysis'] = completed(result())
         value['ai_analysis']['result']['summary'] = '<script>attack</script>'

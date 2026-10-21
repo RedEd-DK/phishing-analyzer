@@ -1,9 +1,9 @@
 """Versioned, evidence-weighted triage. Scores are policy points, not probabilities."""
 import re
 
-GRAY = '#bfbfbf'
-AMBER = '#ffd18a'
-POLICY_VERSION = 3
+SAFE_GREEN = '#4ade80'
+SUSPICIOUS_RED = '#ff6b6b'
+POLICY_VERSION = 4
 SUSPICIOUS_THRESHOLD = 5
 SAFE_MAX_SCORE = 1.5
 # Related observations count at most once per family in each message. Repeating
@@ -97,7 +97,7 @@ def evaluate(items, report=None):
         evidence.append({'message': 'all', 'family': 'ai_adverse_context', 'points': 6})
     action = 'Verify the request with the sender through a known contact method. If unsure, forward it to Security.'
     reason = 'There is not enough consistent evidence to conclude whether this email is legitimate.'
-    label, color = 'UNABLE TO DETERMINE', GRAY
+    label, color = 'SUSPICIOUS', SUSPICIOUS_RED
     basis = []
     complete = (ai.get('coverage_complete') is True and ai.get('original_attached') is True
                 and bool(report.get('originals'))
@@ -106,13 +106,26 @@ def evaluate(items, report=None):
     sensitive_action = result.get('requested_action') in (
         'credentials_or_mfa', 'payment_or_bank_change', 'sensitive_data', 'download_or_execute')
     if hard or score >= SUSPICIOUS_THRESHOLD:
-        label, color = 'SUSPICIOUS', AMBER
-        reason = 'The combined evidence contains a strong warning or several related risk signals. This is not confirmation of spam or phishing.'
+        label, color = 'SUSPICIOUS', SUSPICIOUS_RED
+        families_seen = {signal['family'] for signal in evidence}
+        if 'sensitive_request' in families_seen:
+            reason = 'The message requests a password, MFA code or similar secret. That request needs Security review.'
+        elif 'embedded_instructions' in families_seen:
+            reason = 'The message contains instructions aimed at manipulating the email analyzer. That is a warning requiring review.'
+        elif families_seen & {'dangerous_file', 'active_file'}:
+            reason = 'An attachment filename indicates executable, active or disguised content. The file has not been malware-scanned.'
+        elif 'deceptive_url' in families_seen:
+            reason = 'A link contains user information before its real hostname, which can disguise the destination.'
+        elif 'ai_adverse_context' in families_seen:
+            reason = 'AI analysis identified phishing, unwanted bulk email or concrete risk indicators in the message.'
+        else:
+            reason = 'Several independent warning signals together require review.'
+        reason += ' This is not confirmation of spam or phishing.'
         action = 'Avoid links and attachments. Forward this report and the original email to Security for review.'
         basis.append('strong_or_combined_risk')
     elif (reliable_ai and verdict == 'likely_legitimate' and complete
           and score <= SAFE_MAX_SCORE and not blockers and not sensitive_action):
-        label, color = 'SAFE', '#c8dbc6'
+        label, color = 'SAFE', SAFE_GREEN
         reason = 'The content and requested action are consistent with a legitimate email, with no material warning signs in the available evidence.'
         action = 'No suspicious action was identified. Independently verify unexpected requests for payments, credentials or sensitive changes.'
         basis.append('legitimate_context_supported')
@@ -123,18 +136,20 @@ def evaluate(items, report=None):
     else:
         if ai.get('status') != 'completed':
             basis.append('ai_unavailable')
-            reason = 'AI analysis was unavailable and offline checks did not establish a clear result.'
+            reason = 'AI analysis was unavailable, so this report needs manual review before it can be assessed as Safe.'
         elif not complete:
             basis.append('incomplete_original_evidence')
-            reason = 'The original email or material analysis evidence is missing or incomplete.'
+            reason = 'Essential original-email evidence is missing or incomplete. Manual review is required before treating this report as Safe.'
         elif not reliable_ai:
             basis.append('low_ai_confidence')
-            reason = 'The AI assessment has low confidence and there is no decisive independent warning.'
+            reason = 'The assessment has low confidence. This report needs manual review before it can be assessed as Safe.'
         elif blockers or sensitive_action or score > SAFE_MAX_SCORE:
             basis.append('unresolved_material_evidence')
             reason = 'Some evidence or a sensitive requested action needs independent verification before a Safe assessment.'
         else:
             basis.append('inconclusive_context')
+            reason = 'The available evidence does not support a Safe assessment. Review is required; this is not confirmation of malicious activity.'
+        action = 'Verify the request through a known contact method before acting. Forward this report and the original email to Security if you need further review.'
     return {'policy_version': POLICY_VERSION, 'result': label, 'color': color,
             'reason': reason, 'action': action, 'risk_points': score,
             'suspicious_threshold': SUSPICIOUS_THRESHOLD, 'safe_max_points': SAFE_MAX_SCORE,
@@ -158,7 +173,9 @@ def ai_notes(report):
              'AI summary: ' + str(result.get('summary', ''))]
     notes.extend('AI finding: ' + str(reason) for reason in result.get('reasons', [])[:4])
     if ai.get('coverage_complete') is not True:
-        notes.append('AI input was incomplete or shortened. Not all evidence was assessed by AI.')
+        notes.append('Some material evidence was unavailable or shortened. Manual review is needed.')
+    elif ai.get('metadata_notes'):
+        notes.append('Some unverified header metadata was shortened; material message content was available.')
     return notes
 
 

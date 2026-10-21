@@ -231,7 +231,7 @@ def html_reply(report, config, reference=""):
                      paragraph("UNTIL VERIFIED", 10, WHITE, "font-weight:700;letter-spacing:1.5px;"), gap(8),
                      paragraph("Avoid unexpected attachments, credential requests and unusual payments until independently verified.", 12), gap(20),
                      paragraph("CHECK LIMITS", 10, MUTED, "font-weight:700;letter-spacing:1.5px;"), gap(8),
-                     paragraph("Authentication header claims are unverified. Links were not visited. Attachments were not malware-scanned. Unable to determine does not mean the email is safe. A Safe result is an assessment, not a guarantee.", 11),
+                     paragraph("Authentication header claims are unverified. Links were not visited. Attachments were not malware-scanned. Safe is an assessment, not a guarantee. Suspicious means a warning was found or manual review is required.", 11),
                      '</td></tr>'])
     footer = ('<tr><td style="padding:20px 30px;border-top:1px solid %s;">%s%s</td></tr>' %
              (LINE, label("RED EDUCATION · PHISHING ANALYZER", MUTED),
