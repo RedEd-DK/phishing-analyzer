@@ -320,8 +320,11 @@ Edit `.env` to `AUTO_REPLY_MODE=off` to stop new reply queueing and sending, or 
 to stop future automatic OpenAI requests. Then recreate as in section 2.
 
 Existing pending preview responses can become eligible when `send` is re-enabled.
-Review them first; switching modes does not erase them. A failed/capped AI attempt
-is not automatically retried after changing a key or waiting until tomorrow.
+Messages received while replies were off can also be queued after re-enabling if
+still in Inbox and received after the original activation timestamp. Review that
+backlog and pending jobs first; switching modes does not erase them or reset the
+activation timestamp. A failed/capped AI attempt is not automatically retried
+after changing a key or waiting until tomorrow.
 
 ## 6. Microsoft authorization — administrator checks
 
