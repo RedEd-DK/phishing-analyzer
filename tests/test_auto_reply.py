@@ -52,11 +52,14 @@ class ReplyTests(unittest.TestCase):
         self.assertEqual(str(reply["To"]), "reporter@rededucation.com")
         self.assertIsNone(reply["Cc"])
         self.assertIsNone(reply["Bcc"])
-        self.assertIn("forward this email thread and the original reported email to security@rededucation.com", reply.get_content())
-        self.assertIn("attacker@example.org", reply.get_content())
+        plain = reply.get_body(preferencelist=("plain",)).get_content()
+        self.assertIn("forward this email thread and the original reported email to security@rededucation.com", plain)
+        self.assertIn("attacker@example.org", plain)
         self.assertEqual(reply["In-Reply-To"], "<report-123@rededucation.com>")
         self.assertEqual(reply["Auto-Submitted"], "auto-replied")
-        self.assertFalse(reply.is_multipart())
+        self.assertEqual(reply.get_content_type(), "multipart/alternative")
+        self.assertEqual([p.get_content_type() for p in reply.iter_parts()], ["text/plain", "text/html"])
+        self.assertEqual(list(reply.iter_attachments()), [])
 
     def test_loop_bulk_bounce_and_suppression_headers(self):
         for key, value in [("Auto-Submitted", "auto-replied"), ("Auto-Submitted", "auto-generated; owner=email"),

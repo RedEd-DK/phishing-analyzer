@@ -3,7 +3,7 @@
 Microsoft Graph analysis and response service for `phishing@rededucation.com`.
 Uses OAuth client credentials, polls Inbox, extracts original attached emails,
 and stores raw MIME plus structured evidence and offline security findings in SQLite.
-It can automatically send a plain-text analysis response to the reporting sender,
+It can automatically send a styled HTML analysis response with a plain-text fallback to the reporting sender,
 with escalation guidance to `security@rededucation.com`. No OpenAI/GPT, Jira,
 message deletion/moving, sender blocking, or URL fetching.
 Python standard library only; Docker runs Python 3.12 as an unprivileged user.
@@ -24,9 +24,36 @@ If attached originals exist, response findings focus on those originals so that
 an employee's signature links are not treated as the suspect message's findings.
 Without an extracted original, the response explains that its analysis covers
 only the submitted email and asks for `.eml` for fuller analysis. It never certifies
-an email safe. All replies are plain text and contain no original attachments,
+an email safe. Replies contain both HTML and plain-text alternatives and no original attachments,
 tracking pixels, or raw email body quotes. A valid outer Message-ID is used for
 In-Reply-To/References threading; mailbox client grouping can vary.
+
+### Response design
+
+Responses use a dark navy/cyan design with a clear coverage notice, review priority,
+message details, findings, grouped destination domains, attachment names and a
+Security escalation section. When no original `.eml` was extracted, the main
+status says **Original email needed**; an informational priority never implies
+that the email is safe.
+
+Long tracking URLs are grouped by destination hostname. Query values and long
+paths are shortened in both HTML and text, with the complete URLs retained in
+saved investigation evidence. This is presentation only: no redirect resolution,
+reputation lookup, authentication validation or extra scanning is performed.
+
+The HTML uses presentation tables, inline styles and system fonts. It includes
+no remote images, fonts, scripts or tracking pixels. Suspect links remain defanged
+text. The only generated clickable link is **Contact Security**, a `mailto:` link
+to the configured escalation address. It opens a new email; the response explains
+that the reporter should forward the thread and attach the original for context.
+It does not send or escalate anything on click.
+
+HTML rendering varies by email client; the plain-text alternative carries the
+same scope, findings and next steps. Detailed output is bounded to six original
+messages, five findings, four destination groups and four attachment names per
+message, with a pointer to retained evidence when more details exist. New queued
+responses use the new template; already queued MIME and accepted replies are not
+rewritten or resent. Response recipient rules and delivery safeguards are unchanged.
 
 ### Modes and activation
 

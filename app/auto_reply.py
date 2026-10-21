@@ -1,4 +1,4 @@
-"""Build limited plain-text analysis responses and dispatch the durable outbox."""
+"""Build HTML/plain-text analysis responses and dispatch the durable outbox."""
 import hashlib
 import logging
 import re
@@ -10,7 +10,8 @@ from email.utils import format_datetime, getaddresses
 from datetime import timezone
 
 from .graph_client import SendError
-from .investigation_report import TITLES, display
+from .investigation_report import display
+from .reply_template import html_reply, text_reply
 
 LOG = logging.getLogger(__name__)
 
@@ -48,46 +49,8 @@ def eligibility(report, config):
 
 
 def response_body(report, config):
-    lines = ["Thank you for reporting this email.", "", "AUTOMATED ANALYSIS",
-             "This is an initial assessment using offline checks, not a final phishing verdict.",
-             "Authentication header claims are unverified. Links have not been visited and attachments have not been malware-scanned.", ""]
-    # Focus on originals so a reporter's signature does not become the suspect evidence.
-    def originals(items, prefix=""):
-        for index, item in enumerate(items, 1):
-            label = prefix + str(index)
-            yield label, item
-            yield from originals(item.get("originals", []), label + ".")
-    targets = list(originals(report.get("originals", [])))
-    if not targets:
-        targets = [("Submitted email", report)]
-        lines.extend(["No attached original email was extracted. These checks cover the submitted email only; inline forwards do not preserve complete original headers.",
-                      "For fuller analysis, send the original email as an .eml attachment. Outlook .msg files, encrypted content and archives are not decoded.", ""])
-    for label, item in targets[:20]:
-        assessment = item.get("assessment", {})
-        lines.extend(["Email " + label, "Subject: " + display(item.get("subject")),
-                      "Sender: " + display(item.get("from")),
-                      "Review priority: " + display(assessment.get("review_priority", "unavailable")).upper()])
-        findings = assessment.get("findings", [])
-        for finding in findings[:20]:
-            lines.append("- " + TITLES.get(finding["code"], display(finding["code"])) + ": " + display(finding.get("detail")))
-        if len(findings) > 20:
-            lines.append("Additional findings are available in the saved investigation report.")
-        if not findings:
-            lines.append("No indicators were found by the current checks. This does not establish that the email is safe.")
-        if item.get("urls"):
-            lines.append("Extracted links (defanged):")
-            lines.extend("- " + display(url) for url in item["urls"][:10])
-        if item.get("attachments"):
-            lines.append("Attachments (not scanned):")
-            lines.extend("- " + display(a.get("name")) for a in item["attachments"][:10])
-        lines.append("")
-    body = "\n".join(lines)
-    if len(body) > 28000:
-        body = body[:28000] + "\n[Summary shortened; full evidence is retained in the investigation report.]\n"
-    body += ("\nNEXT STEPS\nDo not open unexpected attachments, enter credentials, or act on unusual payment requests until verified.\n"
-             "If you need to escalate this further, forward this email thread and the original reported email to " + config.escalation_email + ".\n"
-             "This automated response does not automatically forward your report to Security.\n")
-    return body
+    """Plain-text counterpart retained for response previews and existing callers."""
+    return text_reply(report, config)
 
 
 def build_response(report, config, message_id, recipient):
@@ -105,7 +68,8 @@ def build_response(report, config, message_id, recipient):
     if len(ids) == 1 and re.fullmatch(r"<[^\s<>\x00-\x1f]+>", ids[0]):
         msg["In-Reply-To"] = ids[0]
         msg["References"] = ids[0]
-    msg.set_content(response_body(report, config))
+    msg.set_content(text_reply(report, config, marker[:10].upper()))
+    msg.add_alternative(html_reply(report, config, marker[:10].upper()), subtype="html")
     return msg.as_bytes()
 
 

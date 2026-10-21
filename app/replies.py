@@ -35,7 +35,8 @@ def main():
         if raw and not args.status:
             msg = BytesParser(policy=policy.default).parsebytes(raw)
             print("Subject: " + display(msg["Subject"]))
-            print("\n" + msg.get_content())
+            body = msg.get_body(preferencelist=("plain",))
+            print("\n" + (body.get_content() if body else "No plain-text response available."))
     return 0
 
 
