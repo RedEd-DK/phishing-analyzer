@@ -30,11 +30,18 @@ In-Reply-To/References threading; mailbox client grouping can vary.
 
 ### Response design
 
-Responses use a dark navy/cyan design with a clear coverage notice, review priority,
+Responses use a Red Education-inspired black, charcoal and red design with a clear coverage notice, review priority,
 message details, findings, grouped destination domains, attachment names and a
 Security escalation section. When no original `.eml` was extracted, the main
 status says **Original email needed**; an informational priority never implies
 that the email is safe.
+
+The brand treatment follows [Red Education's website](https://www.rededucation.com/):
+the signature `#e41f1b` red, black/white contrast, a clear Red Education wordmark,
+and bold condensed headings. Installed font fallbacks approximate the website's
+Bebas Neue/Roboto hierarchy without fetching fonts remotely. Brand red is used
+for the company accent and contact action; review priorities keep separate semantic
+colours so the company branding does not imply a high-risk verdict.
 
 Long tracking URLs are grouped by destination hostname. Query values and long
 paths are shortened in both HTML and text, with the complete URLs retained in

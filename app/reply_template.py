@@ -6,15 +6,21 @@ from urllib.parse import quote, urlsplit
 from .investigation_report import TITLES, display
 from .security_checks import PRIORITIES, host
 
-BG = "#080e1c"
-PANEL = "#101a2d"
-CARD = "#152239"
-LINE = "#26364e"
-WHITE = "#edf4ff"
-MUTED = "#b0bfd4"
-CYAN = "#69e5df"
+# Website reference: https://www.rededucation.com/ (brand red, black and white).
+# Keep semantic priority colours independent of the red brand accent.
+BG = "#090909"
+PANEL = "#111111"
+CARD = "#1b1b1b"
+LINE = "#363636"
+WHITE = "#f7f7f7"
+MUTED = "#bfbfbf"
+BRAND_RED = "#e41f1b"
+ACCENT_TEXT = "#ffaca7"
 FONT = "font-family:Arial,Helvetica,sans-serif;"
-PRIORITY_COLORS = {"high": "#ff9ca8", "medium": "#ffd18a", "low": "#9bc7ff", "informational": CYAN}
+# Bebas Neue on the website inspires the condensed headline. Installed fonts
+# provide a similar hierarchy without remote font requests in the email.
+HEADLINE_FONT = "font-family:Impact,'Arial Narrow',Arial,Helvetica,sans-serif;"
+PRIORITY_COLORS = {"high": "#ff9e98", "medium": "#ffd18a", "low": "#e7d8b6", "informational": MUTED}
 
 
 def esc(value, limit=320):
@@ -70,7 +76,7 @@ def paragraph(text, size=14, color=MUTED, extra=""):
     return '<p style="margin:0;%sfont-size:%dpx;line-height:1.65;color:%s;%s">%s</p>' % (FONT, size, color, extra, text)
 
 
-def label(text, color=CYAN):
+def label(text, color=ACCENT_TEXT):
     return paragraph(text, 10, color, "font-weight:700;letter-spacing:2px;text-transform:uppercase;")
 
 
@@ -144,11 +150,12 @@ def html_reply(report, config, reference=""):
     url_count = sum(len(item.get("urls", [])) for _, item in items)
     file_count = sum(len(item.get("attachments", [])) for _, item in items)
     status = "ORIGINAL EMAIL NEEDED" if not attached else "INITIAL ANALYSIS READY"
-    status_color = "#ffd18a" if not attached else CYAN
+    status_color = "#ffd18a" if not attached else WHITE
     header = table('<tr><td style="padding:24px 30px;border-bottom:1px solid %s;">%s</td><td align="right" style="padding:24px 30px 24px 0;border-bottom:1px solid %s;">%s</td></tr>' %
-                   (LINE, label("RED EDUCATION", WHITE), LINE, label("SECURITY / EMAIL TRIAGE", MUTED)))
+                   (LINE, paragraph('<span style="color:%s;">Red</span> Education' % BRAND_RED, 21, WHITE, "font-weight:700;letter-spacing:-0.6px;white-space:nowrap;"),
+                    LINE, label("SECURITY / EMAIL TRIAGE", MUTED)))
     hero = (label("● &nbsp; " + status, status_color) + gap(18) +
-            paragraph("Your report,<br>analyzed.", 38, WHITE, "font-weight:700;line-height:1.12;letter-spacing:-1.4px;") + gap(16) +
+            '<p style="margin:0;%sfont-size:40px;line-height:1.08;color:%s;font-weight:700;letter-spacing:-0.3px;">YOUR REPORT.<br>ANALYZED.</p>' % (HEADLINE_FONT, WHITE) + gap(16) +
             paragraph("Thank you for reporting this email. Here’s what our initial checks found—and what to do next.", 15) + gap(24))
     cells = []
     for key, value, color, width in [("REVIEW PRIORITY", priority.capitalize(), accent, 48),
@@ -164,7 +171,7 @@ def html_reply(report, config, reference=""):
                    paragraph("Send the original as an .eml attachment", 19, WHITE, "font-weight:700;") + gap(10) +
                    paragraph("We reviewed your submitted copy, but couldn’t extract an attached original. Inline forwards don’t preserve complete original headers. The sender below is the person who reported it.", 13) + gap(10) +
                    paragraph("Outlook .msg files, encrypted content and archives aren’t decoded by this service.", 12))
-        sections.extend([gap(20), box(content, "#211e29", border="#65523d")])
+        sections.extend([gap(20), box(content, "#272218", border="#78613a")])
     for index, (title, item) in enumerate(items[:6], 1):
         assessment = item.get("assessment", {})
         item_priority = assessment.get("review_priority", "unavailable")
@@ -193,7 +200,7 @@ def html_reply(report, config, reference=""):
             for hostname, urls in list(groups.items())[:4]:
                 domain = html.escape(hostname.replace(".", "[.]"))
                 row = ('<tr><td style="padding:12px 0;border-bottom:1px solid %s;">%s%s</td><td width="60" align="right" valign="top" style="width:60px;min-width:60px;vertical-align:top;padding:12px 0 0 12px;white-space:nowrap;">%s</td></tr>' %
-                      (LINE, paragraph(domain, 13, CYAN, "font-weight:700;overflow-wrap:anywhere;"),
+                      (LINE, paragraph(domain, 13, ACCENT_TEXT, "font-weight:700;overflow-wrap:anywhere;"),
                        paragraph(esc(compact_url(urls[0]), 160), 11, MUTED, "padding-top:5px;word-break:break-all;overflow-wrap:anywhere;"),
                        paragraph(str(len(urls)) + " link" + ("s" if len(urls) != 1 else ""), 11)))
                 content += table(row)
@@ -213,14 +220,14 @@ def html_reply(report, config, reference=""):
         sections.extend([gap(12), paragraph("Additional original emails are available in the investigation report.", 12)])
     security = html.escape(config.escalation_email, quote=True)
     mailto = "mailto:" + quote(config.escalation_email, safe="@.")
-    escalation = (label("HUMAN EXPERTISE / WHEN YOU NEED IT", CYAN) + gap(12) +
+    escalation = (label("HUMAN EXPERTISE / WHEN YOU NEED IT", ACCENT_TEXT) + gap(12) +
                   paragraph("Need a deeper review?", 24, WHITE, "font-weight:700;letter-spacing:-0.5px;") + gap(12) +
                   paragraph("Forward this email thread and the original reported email to <strong style=\"color:%s;\">%s</strong> if you need to escalate further." % (WHITE, security), 14) + gap(20) +
                   table('<tr><td align="center" bgcolor="%s" style="background-color:%s;border-radius:8px;padding:14px 20px;">'
-                        '<a href="%s" style="%sfont-size:14px;color:#071c24;text-decoration:none;font-weight:700;display:block;">Contact Security</a></td></tr>' %
-                        (CYAN, CYAN, html.escape(mailto, quote=True), FONT), extra="max-width:250px;") + gap(12) +
+                        '<a href="%s" style="%sfont-size:14px;color:#ffffff;text-decoration:none;font-weight:700;display:block;">Contact Security</a></td></tr>' %
+                        (BRAND_RED, BRAND_RED, html.escape(mailto, quote=True), FONT), extra="max-width:250px;") + gap(12) +
                   paragraph("Contact opens a new email. Forward this thread to include the analysis and attach the original. Nothing is escalated automatically.", 11))
-    sections.extend([gap(20), box(escalation, "#102c36", border="#2b696c"), gap(24),
+    sections.extend([gap(20), box(escalation, "#291817", border="#783d38"), gap(24),
                      paragraph("UNTIL VERIFIED", 10, WHITE, "font-weight:700;letter-spacing:1.5px;"), gap(8),
                      paragraph("Avoid unexpected attachments, credential requests and unusual payments until independently verified.", 12), gap(20),
                      paragraph("CHECK LIMITS", 10, MUTED, "font-weight:700;letter-spacing:1.5px;"), gap(8),
@@ -243,5 +250,5 @@ def html_reply(report, config, reference=""):
                       '<!--[if mso]><table role="presentation" width="680" cellpadding="0" cellspacing="0"><tr><td><![endif]-->'
                       '<table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" bgcolor="%s" '
                       'style="width:100%%;max-width:680px;border-spacing:0;background-color:%s;border:1px solid %s;border-radius:16px;border-top:3px solid %s;">%s</table>'
-                      '<!--[if mso]></td></tr></table><![endif]--></td></tr>' % (PANEL, PANEL, LINE, CYAN, content), BG)
+                      '<!--[if mso]></td></tr></table><![endif]--></td></tr>' % (PANEL, PANEL, LINE, BRAND_RED, content), BG)
     return document + '</body></html>'
