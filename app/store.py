@@ -20,7 +20,17 @@ class Store:
             created_at REAL NOT NULL, updated_at REAL NOT NULL, next_attempt REAL NOT NULL DEFAULT 0,
             PRIMARY KEY (mailbox,message_id))""")
         self.db.execute("CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS ai_jobs (
+            mailbox TEXT NOT NULL, message_id TEXT NOT NULL, created_at REAL NOT NULL,
+            attempted INTEGER NOT NULL, result_json TEXT, model TEXT NOT NULL,
+            PRIMARY KEY (mailbox,message_id))""")
         self.db.commit()
+
+    def ai_activation(self, mailbox):
+        key = "ai_activation:" + mailbox.lower()
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", (key, str(time.time())))
+        return float(self.db.execute("SELECT value FROM settings WHERE name=?", (key,)).fetchone()[0])
 
     def reply_activation(self, mailbox):
         key = "reply_activation:" + mailbox.lower()

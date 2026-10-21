@@ -104,6 +104,11 @@ def render_text(records):
                       "Received by reporting mailbox (UTC): " + display(record.get("received_at")),
                       "Saved for investigation (UTC): " + display(record.get("processed_at")),
                       "Attached originals: %d" % len(report.get("originals", []))])
+        if report.get("ai_analysis"):
+            from .decision import ai_notes, decision_record
+            lines.extend(["Combined result: " + decision_record(report)["result"],
+                          *[display(note) for note in ai_notes(report)],
+                          "AI usage: " + text_evidence(report["ai_analysis"].get("usage", {}))])
         for label, message in walk_messages(report):
             assessment = message.get("assessment", {})
             lines.extend(["", label.upper(), "Review priority: " + display(assessment.get("review_priority", "unavailable")),
@@ -183,6 +188,11 @@ def render_html(records):
                       (index, esc(report.get("subject")), badge(overall)),
                       '<p class="muted">Received by reporting mailbox (UTC): %s<br>Saved for investigation (UTC): %s<br>Attached originals: %d</p>' %
                       (esc(record.get("received_at")), esc(record.get("processed_at")), len(report.get("originals", [])))])
+        if report.get("ai_analysis"):
+            from .decision import ai_notes, decision_record
+            parts.append('<h3>Combined result: %s</h3>' % esc(decision_record(report)["result"]))
+            parts.extend('<p>%s</p>' % esc(note) for note in ai_notes(report))
+            parts.append('<p>AI usage: %s</p>' % esc(text_evidence(report["ai_analysis"].get("usage", {}))))
         for label, message in walk_messages(report):
             assessment = message.get("assessment", {})
             parts.append('<article class="message"><div class="report-top"><h3>%s</h3>%s</div>' %

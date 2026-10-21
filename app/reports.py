@@ -13,9 +13,14 @@ from .investigation_report import render_html, render_text
 
 def reanalyze(db):
     updated = failed = 0
-    for mailbox, message_id, raw in db.execute("SELECT mailbox,message_id,raw_mime FROM reports"):
+    for mailbox, message_id, raw, saved in db.execute("SELECT mailbox,message_id,raw_mime,report_json FROM reports"):
         try:
             result = analyze(raw)
+            previous = json.loads(saved)
+            if "ai_analysis" in previous:
+                result["ai_analysis"] = previous["ai_analysis"]
+                from .decision import decision_record
+                result["combined_assessment"] = decision_record(result)
             with db:
                 db.execute("UPDATE reports SET report_json=? WHERE mailbox=? AND message_id=?",
                            (json.dumps(result, ensure_ascii=True), mailbox, message_id))

@@ -9,6 +9,7 @@ from .email_parser import analyze
 from .graph_client import GraphClient
 from .store import Store
 from .auto_reply import dispatch, queue_report
+from .ai_analysis import attach_analysis
 
 LOG = logging.getLogger(__name__)
 
@@ -17,18 +18,26 @@ def poll_once(client, store, mailbox, stopped=None):
     processed = failed = 0
     config = getattr(client, "config", None)
     replying = config is not None and config.auto_reply_mode != "off"
+    ai_enabled = config is not None and config.ai_analysis_mode == "on"
+    if ai_enabled:
+        store.ai_activation(mailbox)
     activation = store.reply_activation(mailbox) if replying else None
     for message in client.messages():
         if stopped and stopped.is_set():
             break
         try:
             if store.contains(mailbox, message["id"]):
-                report = store.report(mailbox, message["id"]) if replying else None
+                report = store.report(mailbox, message["id"]) if replying or ai_enabled else None
             else:
                 raw = client.mime(message["id"])
                 report = analyze(raw)
                 store.save(mailbox, message, raw, report)
                 processed += 1
+            if ai_enabled:
+                already_queued = store.db.execute("SELECT 1 FROM reply_outbox WHERE mailbox=? AND message_id=?",
+                                                  (mailbox.lower(), message["id"])).fetchone()
+                if not already_queued:
+                    report = attach_analysis(store, config, message, report)
             if replying:
                 queue_report(store, config, message, report, activation)
         except Exception as exc:
@@ -67,6 +76,7 @@ def main():
         return 2
     store.recover_replies()
     LOG.info("Automatic reply mode: %s", config.auto_reply_mode)
+    LOG.info("AI analysis mode: %s (key configured: %s)", config.ai_analysis_mode, bool(config.openai_api_key))
     client = GraphClient(config)
     try:
         while not stopped.is_set():

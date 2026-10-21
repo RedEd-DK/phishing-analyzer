@@ -2,9 +2,10 @@
 
 Microsoft Graph analysis and response service for `phishing@rededucation.com`.
 Uses OAuth client credentials, polls Inbox, extracts original attached emails,
-and stores raw MIME plus structured evidence and offline security findings in SQLite.
+and stores raw MIME, extracted body text, structured evidence and security findings in SQLite.
+Optional OpenAI API analysis adds contextual classification alongside offline checks.
 It can automatically send a styled HTML analysis response with a plain-text fallback to the reporting sender,
-with escalation guidance to `security@rededucation.com`. No OpenAI/GPT, Jira,
+with escalation guidance to `security@rededucation.com`. No Jira,
 message deletion/moving, sender blocking, or URL fetching.
 Python standard library only; Docker runs Python 3.12 as an unprivileged user.
 
@@ -16,7 +17,7 @@ Python standard library only; Docker runs Python 3.12 as an unprivileged user.
 3. In `send` mode, it responds from `phishing@rededucation.com` to the outer
    reporting sender. It does not use the suspect original's sender or the outer
    Reply-To, and it does not reply-all or copy Security.
-4. The response includes review priority, findings, defanged links, attachment
+4. The response includes a prominent assessment result, findings, defanged links, attachment
    indicators, limits of the assessment, and this instruction:
    "If you need to escalate this further, forward this email thread and the original reported email to security@rededucation.com."
 
@@ -236,7 +237,7 @@ is analyzed as the wrapper body. Outlook `.msg`, TNEF/winmail.dat, encrypted
 messages, archives, defanged URLs, and attachment document contents are not
 decoded. Send the suspect email as an `.eml` attachment for original headers.
 Recorded Authentication-Results/SPF/DKIM/DMARC headers are untrusted evidence;
-this MVP does not independently verify them or assign a phishing verdict.
+the offline layer does not independently verify them or assign a phishing verdict.
 MIME supplied by Graph may be normalized, rather than the original SMTP bytes.
 
 The default message cap is 25 MiB; oversized responses fail without being marked
@@ -326,7 +327,7 @@ exact normalized domains/hostnames, not registrable domains or a public suffix
 list. For example, subdomains can trigger a mismatch. Tracking links can also
 trigger a displayed-target mismatch. The HTML check requires visible text that
 is itself a complete HTTP(S) URL; friendly labels such as "Click here" do not
-establish a domain claim. This MVP does not unwrap Safe Links, follow redirects,
+establish a domain claim. The offline layer does not unwrap Safe Links, follow redirects,
 verify signatures, resolve DNS, check reputation, execute files, or scan archives.
 Authentication-Results trust is intentionally not inferred from its authserv-id;
 see [RFC 8601's trust model](https://www.rfc-editor.org/rfc/rfc8601.html).
@@ -410,3 +411,212 @@ requires credentials and has not been assumed merely because offline tests pass.
 - [List messages and pagination](https://learn.microsoft.com/en-us/graph/api/user-list-messages?view=graph-rest-1.0)
 - [Get MIME and attached original emails](https://learn.microsoft.com/en-us/graph/outlook-get-mime-message)
 - [Immutable message IDs](https://learn.microsoft.com/en-us/graph/outlook-immutable-id)
+
+## OpenAI API analysis
+
+Offline checks always run first. With `AI_ANALYSIS_MODE=on`, new reports received
+since AI activation also get one bounded OpenAI Responses API request. The
+application combines the structured AI assessment with offline findings before
+building the existing branded HTML/plain-text reply. The API does not generate
+HTML, set recipients, send mail, browse links or execute files.
+
+### Local setup
+
+Add these values to your private `.env` (never paste a key into a chat or commit it):
+
+```dotenv
+AI_ANALYSIS_MODE=on
+OPENAI_API_KEY='YOUR_OPENAI_API_KEY'
+OPENAI_MODEL=gpt-4.1-mini
+AI_MAX_INPUT_CHARS=20000
+AI_MAX_OUTPUT_TOKENS=1200
+AI_DAILY_LIMIT=100
+AI_TIMEOUT_SECONDS=25
+```
+
+Use an OpenAI API project with API billing and access to the selected model.
+The model is configurable. GPT-4.1 mini is the initial non-reasoning baseline;
+it has not been evaluated for your organization's actual mail distribution.
+A paid ChatGPT subscription alone is not API billing or an API credential.
+Keep `.env` permissions at `600`. Rebuild after installing this version; recreate
+the service whenever environment values change:
+
+```sh
+docker compose up -d --build analyzer
+docker compose exec -T analyzer python -m app.ai_check
+```
+
+An optional connection test makes **one billable API request with synthetic
+training text only**. It does not read the mailbox, send a reply, or alter reports:
+
+```sh
+docker compose exec -T analyzer python -m app.ai_check --test
+```
+
+The synthetic test is a manual diagnostic outside the collector's daily limit.
+Expect `status: completed` and normally `classification: likely_phishing`.
+A different classification is a reason to evaluate the model and prompt further,
+not proof of correct detection. A missing/invalid key, API outage, refusal,
+invalid structured answer or exhausted limit produces a visible offline fallback.
+Set `AI_ANALYSIS_MODE=off` and recreate to disable future API requests.
+
+### Combined result: balanced policy v3
+
+Exactly three results appear in replies:
+
+- **SAFE**: AI finds legitimate context at medium or high confidence, the attached
+  original's material evidence is complete, and there are no material blockers.
+  Missing authentication headers alone do not reduce a routine message to unknown.
+- **SUSPICIOUS**: a strong warning or a combination of independent risk signals
+  crosses the review threshold, or AI identifies phishing/spam or concrete risk
+  at medium/high confidence.
+- **UNABLE TO DETERMINE**: material content is missing, AI is unavailable or low
+  confidence, or a sensitive action/conflicting evidence remains unresolved.
+
+We weigh signal families instead of treating every anomaly as a veto. Example
+policy points (not probabilities): dangerous executable/obfuscated files 8;
+active-content attachments or URL user-info deception 5; misleading displayed link
+3; IP-based navigation 2; Reply-To domain difference or an unverified authentication
+failure 1; HTTP or an internationalized domain .5. A score of 5 warrants Suspicious.
+Direct password/MFA requests and embedded instructions to manipulate classification
+also trigger review. High-priority warnings remain decisive.
+
+Repeated or correlated findings count once per family per original. Weak clues
+from unrelated originals are not summed together. A Safe result requires no material
+blockers and at most 1.5 policy points; strong evidence cannot be cancelled by an AI
+benign vote. A direct bank-detail change, missing sender identity, deceptive link,
+uninspected archive or incomplete body cannot be cleared just by benign prose.
+
+These are application-specific initial weights, not vendor-derived or statistically
+calibrated risk scores. Medium-confidence legitimate assessments can be Safe;
+model confidence is qualitative and is not treated as a numerical probability.
+Names, internal domains, HTTPS, SurveyMonkey or any other familiar service are
+never unconditional allowlist rules. A plausible survey requesting an MFA code
+remains Suspicious. Safe is an assessment of available evidence, not verified sender
+authenticity, a malware scan or a guarantee about an unvisited destination.
+
+The text and HTML alternatives are both considered when their text differs, so a
+benign plaintext alternative cannot hide a credential request in the HTML body.
+The AI schema now explicitly captures the requested action and concrete risk signals.
+Its instructions distinguish routine business context from credential theft, payment
+changes and data requests. Absence of authentication headers or unavailable browsing
+is not, by itself, a reason to abstain. Both are still disclosed as check limitations.
+Each saved `combined_assessment` includes the policy version, decision basis,
+weighted signals and blockers so an analyst can audit why a result was selected.
+
+For the reported Pulse Check-In survey (reference `F85986E2AF`), the old model
+already returned `likely_legitimate`, `medium`, with complete original coverage and
+no warning findings. Policy v2 rejected it solely because confidence was not high.
+Policy v3 assesses that saved evidence as Safe without needing another API request.
+Original AI results and previously sent replies are not silently rewritten.
+
+The design draws on the documented multi-signal approach in
+[Microsoft's anti-spoofing evaluation](https://learn.microsoft.com/en-us/defender-office-365/anti-phishing-protection-spoofing-about),
+[SpamAssassin's weighted tests](https://spamassassin.apache.org/full/4.0.x/doc/Mail_SpamAssassin_Conf.html),
+and [Cloudflare's content, URL and sender analysis](https://developers.cloudflare.com/cloudflare-one/email-security/reference/how-es-detects-phish/).
+It does not replicate their proprietary models or supply their reputation telemetry,
+sender history, live URL inspection or attachment sandboxing. No external scanner
+or browsing service was added. Evaluate on labelled real reports before claiming
+production detection accuracy.
+
+### Data sent and retained
+
+Each request contains up to six original/nested messages (or the submitted copy
+when no original is attached): bounded subject/body text, selected unverified
+From/Reply-To/Return-Path/authentication/date headers, up to 20 non-resource URLs, 10 displayed
+links, summarized image/resource hostnames, 10 attachment metadata entries and
+20 material offline findings per message. Embedded resources are classified by
+HTML role, not a trusted-domain allowlist. All original URLs and findings remain
+in local evidence. Pure-resource HTTP warnings do not inflate the decision score. The
+serialized evidence is capped at `AI_MAX_INPUT_CHARS`; instructions and the output
+schema add overhead. This is a character bound, not an exact token bound.
+
+Attachment binaries, raw MIME, Received routing headers, Message-IDs, reporter
+wrapper/signature when originals exist, and local credentials are excluded.
+Email address local parts are masked; URL credentials, query strings and fragments
+are removed. This reduces disclosure but is **not complete anonymization**:
+names, body content and URL paths may still contain sensitive information. URL
+redaction also limits analysis of redirect/payment links. Incomplete coverage is
+recorded and cannot produce a Safe result.
+
+The fixed endpoint is `https://api.openai.com/v1/responses`, with TLS and redirects
+disabled. No tools or conversation history are provided. Email data stays in the
+user-input portion; a separate instruction defines it as untrusted evidence.
+Structured outputs are validated locally; model text is escaped/defanged before
+rendering. These measures reduce prompt-injection risk but cannot guarantee model
+accuracy or immunity to adversarial content.
+
+Requests set `store=false`, disabling Responses application-state storage. This
+is **not a promise of zero retention**: default abuse-monitoring logs may retain
+content for up to 30 days, subject to OpenAI's data controls and exceptions. API
+content is not used for model training by default unless you opt in. Review your
+organization's data policy before forwarding sensitive reports through the API.
+See [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data).
+
+Local evidence retains body text and AI results. `report.ai_analysis` records
+status, model, prompt version, coverage, structured answer and actual token usage;
+`report.combined_assessment` records the resulting decision. Treat all reports,
+exports and backups as private. The existing `.env` and data exclusions apply.
+
+### Attempts, costs and failures
+
+A durable `ai_jobs` reservation precedes each automatic request. The worker lock
+allows one collector per volume. A report gets at most one automatic API attempt;
+network errors, 429, 5xx and interrupted/unknown outcomes are not blindly retried.
+Outcomes persist before a reply is queued. Restarting or rescanning does not
+repeat a paid request. Existing outbox jobs are not regenerated or resent.
+
+The default limit is 100 automatic attempts per UTC day across the evidence
+volume, including failed or uncertain attempts. This is not a dollar spending
+cap. `max_output_tokens` caps generated output; actual input/output token counts
+are recorded on received API responses, including incomplete outputs when
+available. Unknown network outcomes may still incur charges not reflected in
+local counts. Manual diagnostics are additional calls. Configure API project
+budgets/alerts as an additional control.
+
+When a key is absent or a limit is reached, the report receives an offline
+fallback. It is not automatically reassessed tomorrow or when credentials change.
+Previously processed backlog is not uploaded; send a new report for fresh
+analysis. Offline `app.reports --reanalyze` refreshes local findings and body text
+while retaining the recorded AI outcome; it makes no API request and does not
+resend replies.
+
+Inspect recent reports and counts without displaying credentials:
+
+```sh
+docker compose exec -T analyzer python -m app.ai_check
+docker compose exec -T analyzer python -m app.reports --limit 3
+docker compose logs --tail=20 analyzer
+```
+
+Use `app.reports --json` for complete AI usage/coverage fields. Report inspection
+prints potentially private evidence. Runtime logs include only fixed status and
+token counts. No live model-quality claim follows from mocked tests.
+
+API implementation references:
+[Structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs),
+[GPT-4.1 mini](https://developers.openai.com/api/docs/models/gpt-4.1-mini),
+[data controls](https://developers.openai.com/api/docs/guides/your-data).
+
+### Repeatable synthetic evaluation
+
+Offline tests include routine business messages and adversarial variants:
+
+```sh
+python3 -m unittest discover -s tests -q
+```
+
+For a small live acceptance set with the configured model:
+
+```sh
+docker compose exec -T analyzer python -m app.evaluate --live
+```
+
+This makes **seven billable API requests** using synthetic examples only. No
+mailbox reads, report updates, reply sending, or automatic retries occur. These
+manual calls are outside the collector's daily cap. Expected cases: survey,
+meeting and paid receipt Safe; password/MFA request, executable attachment and
+prompt injection Suspicious; missing body Unable to determine. Exit code 1 means
+a mismatch or API failure. This is not a statistically representative benchmark.
+The first run on the configured GPT-6.1 Sol matched 7/7 with 6,968 total tokens.
+Broader precision/recall estimates require a separately labelled real-mail corpus.

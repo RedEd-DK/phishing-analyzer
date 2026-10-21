@@ -60,6 +60,32 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("does not mean the email is safe", content)
         self.assertIn("not a final phishing verdict", content)
 
+    def test_unknown_result_never_means_not_spam(self):
+        for report in (sample(), {"subject": "Missing assessment"}):
+            for render in (html_reply, text_reply):
+                content = render(report, config())
+                self.assertIn("UNABLE TO DETERMINE", content)
+                self.assertNotIn("REVIEW PRIORITY", content.upper())
+                self.assertNotIn("NOT SPAM", content.upper())
+                self.assertIn("known contact method", content)
+
+    def test_suspicious_original_including_nested_and_hidden_originals(self):
+        risky = sample()
+        risky["attachments"] = [{"name": "invoice.pdf.exe"}]
+        for originals in ([risky], [sample()] * 6 + [risky], [{**sample(), "originals": [risky]}]):
+            report = enrich({**sample(), "originals": originals})
+            for render in (html_reply, text_reply):
+                content = render(report, config())
+                self.assertIn("SUSPICIOUS", content)
+                self.assertIn("not confirmation of spam or phishing", content)
+                self.assertNotIn("REVIEW PRIORITY", content.upper())
+
+    def test_unverified_authentication_pass_is_not_a_clean_verdict(self):
+        report = sample()
+        report["headers"].append({"name": "Authentication-Results", "value": "forged.test; spf=pass; dkim=pass; dmarc=pass"})
+        enrich(report)
+        self.assertIn("UNABLE TO DETERMINE", html_reply(report, config()))
+
     def test_tracking_urls_grouped_and_tokens_not_echoed(self):
         for content in (html_reply(sample(), config()), text_reply(sample(), config())):
             self.assertIn("mandrillapp[.]com", content)

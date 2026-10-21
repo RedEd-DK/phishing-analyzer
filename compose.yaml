@@ -15,6 +15,13 @@ services:
       ESCALATION_EMAIL: ${ESCALATION_EMAIL:-security@rededucation.com}
       REPORTER_DOMAINS: ${REPORTER_DOMAINS:-rededucation.com}
       REPLIES_PER_HOUR: ${REPLIES_PER_HOUR:-10}
+      AI_ANALYSIS_MODE: ${AI_ANALYSIS_MODE:-off}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      AI_MAX_INPUT_CHARS: ${AI_MAX_INPUT_CHARS:-20000}
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-1200}
+      AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-100}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-25}
     volumes:
       - analyzer-data:/data
     read_only: true

@@ -4,7 +4,8 @@ from collections import OrderedDict
 from urllib.parse import quote, urlsplit
 
 from .investigation_report import TITLES, display
-from .security_checks import PRIORITIES, host
+from .security_checks import host
+from .decision import ai_notes, combine
 
 # Website reference: https://www.rededucation.com/ (brand red, black and white).
 # Keep semantic priority colours independent of the red brand accent.
@@ -39,9 +40,8 @@ def targets(report):
     return list(walk(report.get("originals", []))) or [("Submitted email", report)]
 
 
-def priority_for(items):
-    priorities = [item.get("assessment", {}).get("review_priority", "unavailable") for _, item in items]
-    return max(priorities, key=lambda value: PRIORITIES.get(value, -1), default="unavailable")
+def result_for(items, report=None):
+    return combine(items, report)
 
 
 def destinations(urls):
@@ -99,10 +99,11 @@ def box(content, background=CARD, padding=20, border=LINE):
 def text_reply(report, config, reference=""):
     items = targets(report)
     attached = bool(report.get("originals"))
+    result, result_color, reason, action = result_for(items, report)
     lines = ["RED EDUCATION | EMAIL ANALYSIS", "Thank you for reporting this email.", "",
              "Coverage: " + ("Attached original available" if attached else "LIMITED — original email needed"),
-             "Review priority: " + priority_for(items).upper(),
-             "This is an initial assessment using offline checks, not a final phishing verdict."]
+             "RESULT: " + result, reason, "What to do: " + action,
+             "This is an initial assessment, not a final phishing verdict.", *ai_notes(report)]
     if reference:
         lines.append("Report reference: " + reference)
     if not attached:
@@ -113,7 +114,6 @@ def text_reply(report, config, reference=""):
                       ("Sender: " if attached else "Reporting sender: ") + display(item.get("from"))[:180]])
         assessment = item.get("assessment", {})
         findings = assessment.get("findings", [])
-        lines.append("Review priority: " + assessment.get("review_priority", "unavailable").upper())
         if not assessment:
             lines.append("Assessment unavailable; a manual review is needed.")
         elif not findings:
@@ -138,15 +138,14 @@ def text_reply(report, config, reference=""):
                   "If you need to escalate this further, forward this email thread and the original reported email to " + config.escalation_email + ".",
                   "This automated response does not automatically forward your report to Security.", "",
                   "UNTIL VERIFIED", "Do not open unexpected attachments, enter credentials, or act on unusual payment requests.", "",
-                  "CHECK LIMITS", "Authentication header claims are unverified. Links have not been visited and attachments have not been malware-scanned."])
+                  "CHECK LIMITS", "Authentication header claims are unverified. Links have not been visited and attachments have not been malware-scanned. A Safe result is an assessment, not a guarantee."])
     return "\n".join(lines) + "\n"
 
 
 def html_reply(report, config, reference=""):
     items = targets(report)
     attached = bool(report.get("originals"))
-    priority = priority_for(items)
-    accent = PRIORITY_COLORS.get(priority, MUTED)
+    result, result_color, reason, action = result_for(items, report)
     url_count = sum(len(item.get("urls", [])) for _, item in items)
     file_count = sum(len(item.get("attachments", [])) for _, item in items)
     status = "ORIGINAL EMAIL NEEDED" if not attached else "INITIAL ANALYSIS READY"
@@ -154,17 +153,21 @@ def html_reply(report, config, reference=""):
     header = table('<tr><td style="padding:24px 30px;border-bottom:1px solid %s;">%s</td><td align="right" style="padding:24px 30px 24px 0;border-bottom:1px solid %s;">%s</td></tr>' %
                    (LINE, paragraph('<span style="color:%s;">Red</span> Education' % BRAND_RED, 21, WHITE, "font-weight:700;letter-spacing:-0.6px;white-space:nowrap;"),
                     LINE, label("SECURITY / EMAIL TRIAGE", MUTED)))
-    hero = (label("● &nbsp; " + status, status_color) + gap(18) +
-            '<p style="margin:0;%sfont-size:40px;line-height:1.08;color:%s;font-weight:700;letter-spacing:-0.3px;">YOUR REPORT.<br>ANALYZED.</p>' % (HEADLINE_FONT, WHITE) + gap(16) +
-            paragraph("Thank you for reporting this email. Here’s what our initial checks found—and what to do next.", 15) + gap(24))
+    hero = (label("● &nbsp; EMAIL ASSESSMENT", MUTED) + gap(18) +
+            '<p style="margin:0;%sfont-size:40px;line-height:1.08;color:%s;font-weight:700;letter-spacing:-0.3px;">%s</p>' % (HEADLINE_FONT, result_color, result) + gap(16) +
+            paragraph(esc(reason), 15) + gap(12) +
+            paragraph("<strong>What to do:</strong> " + esc(action), 14, WHITE) + gap(24))
     cells = []
-    for key, value, color, width in [("REVIEW PRIORITY", priority.capitalize(), accent, 48),
-                                    ("LINKS OBSERVED", str(url_count), WHITE, 26),
-                                    ("FILES ATTACHED", str(file_count), WHITE, 26)]:
+    for key, value, color, width in [("LINKS OBSERVED", str(url_count), WHITE, 50),
+                                    ("FILES ATTACHED", str(file_count), WHITE, 50)]:
         cells.append('<td width="%d%%" valign="top" style="width:%d%%;padding:16px 8px;border-top:1px solid %s;">%s%s%s</td>' %
                      (width, width, LINE, paragraph(key, 9, MUTED, "font-weight:700;letter-spacing:1px;"), gap(8), paragraph(esc(value), 17, color, "font-weight:700;")))
     hero += table('<tr>' + ''.join(cells) + '</tr>')
-    hero += paragraph("Initial offline assessment · not a final phishing verdict", 11, MUTED, "padding-top:12px;")
+    hero += paragraph("Initial assessment · not a final phishing verdict", 11, MUTED, "padding-top:12px;")
+    for note in ai_notes(report):
+        hero += gap(8) + paragraph(esc(note, 620), 12)
+    if not attached:
+        hero += gap(8) + label(status, status_color)
     sections = [header, '<tr><td class="content-pad" style="padding:32px 30px;">' + hero]
     if not attached:
         content = (label("01 / IMPROVE ANALYSIS", "#ffd18a") + gap(10) +
@@ -174,12 +177,9 @@ def html_reply(report, config, reference=""):
         sections.extend([gap(20), box(content, "#272218", border="#78613a")])
     for index, (title, item) in enumerate(items[:6], 1):
         assessment = item.get("assessment", {})
-        item_priority = assessment.get("review_priority", "unavailable")
-        color = PRIORITY_COLORS.get(item_priority, MUTED)
         content = label(("02" if not attached else "%02d" % index) + " / " + esc(title), MUTED)
         content += gap(10) + paragraph(esc(item.get("subject"), 240), 20, WHITE, "font-weight:700;overflow-wrap:anywhere;word-break:break-word;")
         content += gap(10) + paragraph(("Original sender: " if attached else "Reporting sender: ") + esc(item.get("from"), 180), 12)
-        content += gap(8) + paragraph("Review priority · " + esc(item_priority.capitalize()), 12, color, "font-weight:700;")
         content += gap(22) + label("WHAT STOOD OUT", WHITE)
         findings = assessment.get("findings", [])
         for finding in findings[:5]:
@@ -231,7 +231,7 @@ def html_reply(report, config, reference=""):
                      paragraph("UNTIL VERIFIED", 10, WHITE, "font-weight:700;letter-spacing:1.5px;"), gap(8),
                      paragraph("Avoid unexpected attachments, credential requests and unusual payments until independently verified.", 12), gap(20),
                      paragraph("CHECK LIMITS", 10, MUTED, "font-weight:700;letter-spacing:1.5px;"), gap(8),
-                     paragraph("Authentication header claims are unverified. Links were not visited. Attachments were not malware-scanned. An informational priority does not mean the email is safe.", 11),
+                     paragraph("Authentication header claims are unverified. Links were not visited. Attachments were not malware-scanned. Unable to determine does not mean the email is safe. A Safe result is an assessment, not a guarantee.", 11),
                      '</td></tr>'])
     footer = ('<tr><td style="padding:20px 30px;border-top:1px solid %s;">%s%s</td></tr>' %
              (LINE, label("RED EDUCATION · PHISHING ANALYZER", MUTED),
@@ -245,7 +245,7 @@ def html_reply(report, config, reference=""):
                 '@media only screen and (max-width:520px){.content-pad{padding:24px 16px!important}.card-pad{padding:16px!important}}'
                 '</style></head><body style="margin:0;padding:0;background-color:%s;">' % BG)
     document += '<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">'
-    document += 'Your email analysis is ready. ' + ('Attach the original email for fuller analysis.' if not attached else 'Review the findings and next steps.') + '</div>'
+    document += 'Result: ' + html.escape(result) + '. ' + ('Attach the original email for fuller analysis.' if not attached else 'Review the findings and next steps.') + '</div>'
     document += table('<tr><td align="center" style="padding:28px 12px;">'
                       '<!--[if mso]><table role="presentation" width="680" cellpadding="0" cellspacing="0"><tr><td><![endif]-->'
                       '<table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" bgcolor="%s" '

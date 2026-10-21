@@ -17,6 +17,13 @@ class Config:
     escalation_email: str = "security@rededucation.com"
     reporter_domains: tuple = ("rededucation.com",)
     replies_per_hour: int = 10
+    ai_analysis_mode: str = "off"
+    openai_api_key: str = field(default="", repr=False)
+    openai_model: str = "gpt-4.1-mini"
+    ai_max_input_chars: int = 20000
+    ai_max_output_tokens: int = 1200
+    ai_daily_limit: int = 100
+    ai_timeout_seconds: int = 25
 
     @classmethod
     def from_env(cls):
@@ -41,5 +48,20 @@ class Config:
         from email.utils import parseaddr
         if parseaddr(escalation)[1] != escalation or "@" not in escalation or any(c.isspace() for c in escalation):
             raise ValueError("Invalid escalation email")
+        ai_mode = os.environ.get("AI_ANALYSIS_MODE", "off").lower().strip()
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini").strip()
+        input_chars = int(os.environ.get("AI_MAX_INPUT_CHARS", "20000"))
+        output_tokens = int(os.environ.get("AI_MAX_OUTPUT_TOKENS", "1200"))
+        daily_limit = int(os.environ.get("AI_DAILY_LIMIT", "100"))
+        timeout = int(os.environ.get("AI_TIMEOUT_SECONDS", "25"))
+        import re
+        if (ai_mode not in ("off", "on") or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", model)
+                or not 4000 <= input_chars <= 40000 or not 300 <= output_tokens <= 4000
+                or not 1 <= daily_limit <= 1000 or not 5 <= timeout <= 45
+                or any(c.isspace() for c in api_key)):
+            raise ValueError("Invalid AI configuration")
+        # Missing key leaves collection operational and produces a visible fallback.
         return cls(tenant, client, secret, mailbox, interval,
-                   Path(os.environ.get("DATA_DIR", "data")), limit, mode, escalation, domains, rate)
+                   Path(os.environ.get("DATA_DIR", "data")), limit, mode, escalation, domains, rate,
+                   ai_mode, api_key, model, input_chars, output_tokens, daily_limit, timeout)
