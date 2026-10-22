@@ -30,6 +30,24 @@ work. These actions affect other applications. Use targeted Compose commands.
 A VMware power-on must be performed through the infrastructure management console;
 do not invent a hypervisor address, VM inventory ID or admin credential.
 
+## Docker networking
+
+- Production network `phishing-analyzer_default` uses bridge `br-phishing`, subnet
+  `192.168.251.0/28`, gateway `192.168.251.1`; Compose explicitly configures IPAM.
+- The former `172.26.0.0/16` bridge conflicted with corporate US addressing. Do not
+  revert to it or automatic subnet allocation. Before changing ranges, check host
+  routes, all Docker subnets and corporate/VPN allocations; visible routes alone
+  cannot establish enterprise-wide availability.
+- Overrides are `ANALYZER_NETWORK_SUBNET` and `ANALYZER_NETWORK_GATEWAY` in private
+  `.env`; change both consistently. The bridge name is reserved for this deployment.
+- A subnet change requires stopping/removing only the analyzer container, removing
+  its now-empty network, and recreating it. Follow the README migration and backup
+  steps. Preserve the named volume and project name. Do not restart global Docker,
+  disconnect other apps, prune networks or switch to host networking.
+- For a Compose-only network change, reuse the application image. Verify the new
+  IPAM/bridge, removal of the old conflicting bridge/address, unchanged other
+  containers, successful Graph polling and OpenAI connectivity. Keep Mac worker off.
+
 ## Secrets and evidence
 
 - Keep `CLIENT_SECRET` and `OPENAI_API_KEY` only in private `.env` or approved secret

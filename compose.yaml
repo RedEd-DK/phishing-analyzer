@@ -42,3 +42,15 @@ services:
         max-file: "3"
 volumes:
   analyzer-data:
+
+# Reserve a small bridge range instead of Docker's automatic /16 allocation.
+# Check corporate/VPN routes before selecting a different subnet and gateway.
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-phishing
+    ipam:
+      config:
+        - subnet: ${ANALYZER_NETWORK_SUBNET:-192.168.251.0/28}
+          gateway: ${ANALYZER_NETWORK_GATEWAY:-192.168.251.1}

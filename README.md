@@ -33,6 +33,8 @@ A running process alone does not prove Microsoft/OpenAI connectivity.
 | Git repository / branch | `https://github.com/RedEd-DK/phishing-analyzer.git` / `main` |
 | Compose project / service | `phishing-analyzer` / `analyzer` |
 | Container / image | `phishing-analyzer-analyzer-1` / `phishing-analyzer-analyzer:latest` |
+| Docker network / host bridge | `phishing-analyzer_default` / `br-phishing` |
+| Bridge subnet / gateway | `192.168.251.0/28` / `192.168.251.1` |
 | Persistent Docker volume | `phishing-analyzer_analyzer-data` |
 | Database inside container | `/data/reports.sqlite3` |
 | Private VM configuration | `/home/dhanush.kumar/phishing/.env` |
@@ -78,7 +80,8 @@ Report/outbox commands may display private message content or reporter addresses
 ### Restart versus apply changes
 
 - **Temporary issue, unchanged code/configuration:** use `docker compose restart analyzer`.
-- **Changed `.env`:** recreate the container; `restart` does not load new values.
+- **Changed bridge subnet/gateway:** follow the network migration below; a container restart cannot change an existing network.
+- **Changed `.env` application settings:** recreate the container; `restart` does not load new values.
 - **Changed application code:** rebuild the image and recreate the container.
 - **Documentation-only Git update:** pull the files; no rebuild/restart is required.
 
@@ -95,6 +98,74 @@ docker compose logs --tail=30 analyzer
 
 Do not print `cat .env`, `docker compose config`, `printenv`, or full container
 inspection output into logs/chats: those can reveal credentials.
+
+### Dedicated bridge and subnet changes
+
+The analyzer uses `phishing-analyzer_default`, host interface `br-phishing`, with
+subnet **`192.168.251.0/28`** and gateway **`192.168.251.1`**. Container addresses
+are allocated within that range; do not depend on one fixed container IP.
+No ports are published. Outbound DNS/HTTPS and Docker NAT remain enabled.
+
+The previous automatically allocated `172.26.0.0/16` overlapped corporate US
+addressing. Do not restore that subnet or remove this explicit IPAM configuration.
+The replacement range was checked against this VM's visible routes and Docker
+networks. Confirm upstream corporate/VPN allocations with your network team before
+using it on another host or changing it; host routes alone cannot show every remote
+allocation. This is a private bridge, not the VM's SSH/public address.
+
+Check the active configuration without exposing credentials:
+
+```sh
+cd /home/dhanush.kumar/phishing
+docker network inspect phishing-analyzer_default --format '{{json .IPAM.Config}}'
+docker inspect phishing-analyzer-analyzer-1 --format '{{range .NetworkSettings.Networks}}IP={{.IPAddress}} gateway={{.Gateway}}{{end}}'
+ip -4 address show dev br-phishing
+ip -4 route get 172.26.0.1
+```
+
+The last command should use the corporate/upstream route, rather than report a
+local address owned by the old analyzer bridge. It does not prove connectivity to
+a particular US service; test a known service separately.
+
+**Existing deployment migration / future subnet changes:** back up the database
+and private `.env` using section 8 first. Check `ip -4 route show table all` and
+all Docker network subnets. Choose a non-overlapping range; to override the defaults,
+set both `ANALYZER_NETWORK_SUBNET` and `ANALYZER_NETWORK_GATEWAY` in private `.env`.
+Keep `COMPOSE_PROJECT_NAME=phishing-analyzer`. The gateway must belong to the subnet.
+Keep `br-phishing` reserved for this one deployment.
+
+Pull the committed configuration, then validate it without printing secrets:
+
+```sh
+cd /home/dhanush.kumar/phishing
+git status --short
+git pull --ff-only origin main
+docker compose config --quiet
+docker network inspect phishing-analyzer_default --format '{{range .Containers}}{{.Name}} {{end}}'
+```
+
+Proceed only if that network contains the analyzer alone. During the following
+brief interruption, only the analyzer container and its network are removed.
+The image, named evidence volume and private configuration are retained:
+
+```sh
+docker compose stop analyzer
+docker compose rm -f analyzer
+docker network rm phishing-analyzer_default
+docker compose up -d --no-build analyzer
+docker compose ps -a
+docker network inspect phishing-analyzer_default --format '{{json .IPAM.Config}}'
+docker compose exec -T analyzer python -m app.ai_check
+docker compose logs --since=3m --tail=30 analyzer
+```
+
+Run each command only after the preceding command succeeds. A network-in-use
+error requires investigation; do not disconnect another application's container.
+No image rebuild is required for this Compose-only change. Confirm a fresh
+`Poll complete: ... failed=0`, the expected AI/reply modes and unchanged `/data`
+volume. Optionally verify OpenAI connectivity with the billable synthetic test in
+section 5. Do not restart the Docker daemon, reboot the VM, prune networks or use
+`down -v` for this migration. See [Compose IPAM configuration](https://docs.docker.com/reference/compose-file/networks/#ipam).
 
 ## 3. VM power, Docker startup and reboot
 
